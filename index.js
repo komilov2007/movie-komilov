@@ -12,15 +12,15 @@ const __dirname = path.dirname(__filename);
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = String(process.env.ADMIN_ID || '').trim();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
 if (!BOT_TOKEN) {
-  console.error('BOT_TOKEN topilmadi. .env ga yozing.');
+  console.error('BOT_TOKEN topilmadi');
   process.exit(1);
 }
 
 if (!ADMIN_ID) {
-  console.error('ADMIN_ID topilmadi. .env ga yozing.');
+  console.error('ADMIN_ID topilmadi');
   process.exit(1);
 }
 
@@ -30,20 +30,7 @@ const app = express();
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_PATH = path.join(DATA_DIR, 'movies.json');
 
-// admin session
 const adminSessions = {};
-
-/*
-adminSessions[adminId] = {
-  step: "title" | "language" | "genre" | "code" | "video",
-  data: {
-    title: "",
-    language: "",
-    genre: "",
-    code: ""
-  }
-}
-*/
 
 function ensureDb() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -81,10 +68,6 @@ function isAdmin(ctx) {
   return String(ctx.from?.id) === ADMIN_ID;
 }
 
-function resetAdminSession(adminId) {
-  delete adminSessions[adminId];
-}
-
 function getMovieCaption(movie) {
   return `🎬 ${movie.title}
 
@@ -93,30 +76,68 @@ function getMovieCaption(movie) {
 🆔 Kod: ${movie.code}`;
 }
 
-// ===== EXPRESS FOR RENDER =====
+function parseMovieText(text) {
+  const lines = text
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const data = {
+    title: '',
+    language: '',
+    genre: '',
+    code: '',
+  };
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+
+    if (lower.startsWith('nomi:')) {
+      data.title = line.slice(5).trim();
+    } else if (lower.startsWith('til:')) {
+      data.language = line.slice(4).trim();
+    } else if (lower.startsWith('janr:')) {
+      data.genre = line.slice(5).trim();
+    } else if (lower.startsWith('kod:')) {
+      data.code = line.slice(4).trim();
+    }
+  }
+
+  if (!data.title || !data.language || !data.genre || !data.code) {
+    return null;
+  }
+
+  return data;
+}
+
 app.get('/', (req, res) => {
   res.send('Bot ishlayapti');
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`HTTP server running on port ${PORT}`);
+  console.log(`Server ${PORT} portda ishlayapti`);
 });
 
-// ===== BOT COMMANDS =====
 bot.start(async (ctx) => {
   try {
     if (isAdmin(ctx)) {
       return ctx.reply(
         `Admin panelga xush kelibsiz.
 
-Buyruqlar:
-/add - yangi kino qo‘shish
-/list - kinolar ro‘yxati
-/delete 100 - kod bo‘yicha o‘chirish
-/cancel - jarayonni bekor qilish
-/id - sizning ID
+Kino qo'shish:
+1) quyidagicha text yuboring
 
-Userlar esa faqat kod yuborib kino oladi.`
+Nomi: Fast X
+Til: Uzbek
+Janr: Jangari
+Kod: 101
+
+2) keyin videoni yuboring
+
+Buyruqlar:
+/list - ro'yxat
+/delete 101 - o'chirish
+/id - sizning ID`
       );
     }
 
@@ -133,17 +154,18 @@ bot.help(async (ctx) => {
   try {
     if (isAdmin(ctx)) {
       return ctx.reply(
-        `Admin buyruqlari:
+        `Format:
 
-/add - yangi kino qo‘shish
-/list - kinolar ro‘yxati
-/delete 100 - kod bo‘yicha o‘chirish
-/cancel - jarayonni bekor qilish
-/id - sizning ID`
+Nomi: Fast X
+Til: Uzbek
+Janr: Jangari
+Kod: 101
+
+Keyin videoni yuborasiz.`
       );
     }
 
-    return ctx.reply('Kino kodini yuboring. Masalan: 100');
+    return ctx.reply('Kino kodini yuboring. Masalan: 101');
   } catch (error) {
     console.error('/help xatolik:', error);
   }
@@ -154,43 +176,6 @@ bot.command('id', async (ctx) => {
     await ctx.reply(`🆔 Sizning Telegram ID: ${ctx.from.id}`);
   } catch (error) {
     console.error('/id xatolik:', error);
-  }
-});
-
-bot.command('cancel', async (ctx) => {
-  try {
-    if (!isAdmin(ctx)) {
-      return ctx.reply('Bu buyruq faqat admin uchun.');
-    }
-
-    resetAdminSession(String(ctx.from.id));
-    return ctx.reply('❌ Jarayon bekor qilindi.');
-  } catch (error) {
-    console.error('/cancel xatolik:', error);
-  }
-});
-
-bot.command('add', async (ctx) => {
-  try {
-    if (!isAdmin(ctx)) {
-      return ctx.reply('Bu buyruq faqat admin uchun.');
-    }
-
-    const adminId = String(ctx.from.id);
-
-    adminSessions[adminId] = {
-      step: 'title',
-      data: {
-        title: '',
-        language: '',
-        genre: '',
-        code: '',
-      },
-    };
-
-    return ctx.reply('1/5 🎬 Kino nomini kiriting:');
-  } catch (error) {
-    console.error('/add xatolik:', error);
   }
 });
 
@@ -208,12 +193,13 @@ bot.command('list', async (ctx) => {
     }
 
     const text = items
-      .map((item, index) => {
-        return `${index + 1}) ${item.code} - ${item.title} | ${item.language} | ${item.genre}`;
-      })
+      .map(
+        (item, index) =>
+          `${index + 1}) ${item.code} - ${item.title} | ${item.language} | ${item.genre}`
+      )
       .join('\n');
 
-    return ctx.reply(`📃 Kinolar ro‘yxati:\n\n${text}`);
+    return ctx.reply(`📃 Kinolar ro'yxati:\n\n${text}`);
   } catch (error) {
     console.error('/list xatolik:', error);
   }
@@ -229,7 +215,7 @@ bot.command('delete', async (ctx) => {
     const code = parts[1]?.trim();
 
     if (!code) {
-      return ctx.reply('⚠️ Misol: /delete 100');
+      return ctx.reply('⚠️ Misol: /delete 101');
     }
 
     const db = readDb();
@@ -238,71 +224,54 @@ bot.command('delete', async (ctx) => {
       return ctx.reply('❌ Bunday kod topilmadi.');
     }
 
-    const deletedTitle = db[code].title;
     delete db[code];
     writeDb(db);
 
-    return ctx.reply(`🗑 O‘chirildi: ${code} - ${deletedTitle}`);
+    return ctx.reply(`🗑 O‘chirildi: ${code}`);
   } catch (error) {
     console.error('/delete xatolik:', error);
   }
 });
 
-// ===== TEXT HANDLER =====
 bot.on('text', async (ctx) => {
   try {
     const text = ctx.message.text.trim();
 
     if (text.startsWith('/')) return;
 
-    // ADMIN STEP-BY-STEP ADD
     if (isAdmin(ctx)) {
-      const adminId = String(ctx.from.id);
-      const session = adminSessions[adminId];
+      const parsed = parseMovieText(text);
 
-      if (session) {
-        if (session.step === 'title') {
-          session.data.title = text;
-          session.step = 'language';
-          return ctx.reply('2/5 🌍 Kino tilini kiriting:');
+      if (parsed) {
+        const db = readDb();
+
+        if (db[parsed.code]) {
+          return ctx.reply('⚠️ Bu kod band. Boshqa kod yozing.');
         }
 
-        if (session.step === 'language') {
-          session.data.language = text;
-          session.step = 'genre';
-          return ctx.reply('3/5 🎭 Kino janrini kiriting:');
-        }
+        adminSessions[ctx.from.id] = parsed;
 
-        if (session.step === 'genre') {
-          session.data.genre = text;
-          session.step = 'code';
-          return ctx.reply('4/5 🆔 Kino kodini kiriting:');
-        }
+        return ctx.reply(
+          `✅ Ma'lumot olindi:
 
-        if (session.step === 'code') {
-          const db = readDb();
+${getMovieCaption(parsed)}
 
-          if (db[text]) {
-            return ctx.reply('⚠️ Bu kod band. Boshqa kod kiriting:');
-          }
-
-          session.data.code = text;
-          session.step = 'video';
-          return ctx.reply('5/5 📹 Endi videoni yuboring:');
-        }
-
-        if (session.step === 'video') {
-          return ctx.reply('⚠️ Endi text emas, videoni yuboring.');
-        }
+Endi videoni yuboring.`
+        );
       }
     }
 
-    // USER OR ADMIN SEARCH BY CODE
     const db = readDb();
     const movie = db[text];
 
     if (!movie) {
       return ctx.reply('❌ Bunday kod topilmadi.');
+    }
+
+    if (movie.send_type === 'document') {
+      return ctx.replyWithDocument(movie.file_id, {
+        caption: getMovieCaption(movie),
+      });
     }
 
     return ctx.replyWithVideo(movie.file_id, {
@@ -314,63 +283,45 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// ===== VIDEO HANDLER =====
 bot.on('video', async (ctx) => {
   try {
-    if (!isAdmin(ctx)) {
-      return ctx.reply('⛔ Faqat admin video qo‘sha oladi.');
-    }
+    if (!isAdmin(ctx)) return;
 
-    const adminId = String(ctx.from.id);
-    const session = adminSessions[adminId];
+    const tempMovie = adminSessions[ctx.from.id];
 
-    if (!session) {
-      return ctx.reply('⚠️ Avval /add bosing.');
-    }
-
-    if (session.step !== 'video') {
-      return ctx.reply('⚠️ Hali video yuborish navbati kelmadi.');
+    if (!tempMovie?.code) {
+      return ctx.reply("⚠️ Avval kino ma'lumotini yuboring.");
     }
 
     const db = readDb();
 
-    db[session.data.code] = {
-      title: session.data.title,
-      language: session.data.language,
-      genre: session.data.genre,
-      code: session.data.code,
+    db[tempMovie.code] = {
+      ...tempMovie,
       file_id: ctx.message.video.file_id,
+      send_type: 'video',
       created_at: new Date().toISOString(),
     };
 
     writeDb(db);
+    delete adminSessions[ctx.from.id];
 
-    const savedMovie = db[session.data.code];
-    resetAdminSession(adminId);
+    return ctx.reply(`✅ Kino saqlandi
 
-    return ctx.reply(
-      `✅ Kino saqlandi
-
-${getMovieCaption(savedMovie)}`
-    );
+${getMovieCaption(db[tempMovie.code])}`);
   } catch (error) {
     console.error('video handler xatolik:', error);
     return ctx.reply('⚠️ Videoni saqlashda xatolik bo‘ldi.');
   }
 });
 
-// ===== DOCUMENT VIDEO HANDLER (mp4 as file) =====
 bot.on('document', async (ctx) => {
   try {
-    if (!isAdmin(ctx)) {
-      return;
-    }
+    if (!isAdmin(ctx)) return;
 
-    const adminId = String(ctx.from.id);
-    const session = adminSessions[adminId];
+    const tempMovie = adminSessions[ctx.from.id];
 
-    if (!session || session.step !== 'video') {
-      return;
+    if (!tempMovie?.code) {
+      return ctx.reply("⚠️ Avval kino ma'lumotini yuboring.");
     }
 
     const doc = ctx.message.document;
@@ -379,57 +330,38 @@ bot.on('document', async (ctx) => {
       /\.(mp4|mkv|mov|avi|webm)$/i.test(doc?.file_name || '');
 
     if (!isVideoFile) {
-      return ctx.reply('⚠️ Bu video fayl emas. Iltimos video yuboring.');
+      return ctx.reply('⚠️ Bu video fayl emas.');
     }
 
     const db = readDb();
 
-    db[session.data.code] = {
-      title: session.data.title,
-      language: session.data.language,
-      genre: session.data.genre,
-      code: session.data.code,
+    db[tempMovie.code] = {
+      ...tempMovie,
       file_id: doc.file_id,
-      created_at: new Date().toISOString(),
       send_type: 'document',
+      created_at: new Date().toISOString(),
     };
 
     writeDb(db);
+    delete adminSessions[ctx.from.id];
 
-    const savedMovie = db[session.data.code];
-    resetAdminSession(adminId);
+    return ctx.reply(`✅ Kino saqlandi
 
-    return ctx.reply(
-      `✅ Kino saqlandi
-
-${getMovieCaption(savedMovie)}`
-    );
+${getMovieCaption(db[tempMovie.code])}`);
   } catch (error) {
     console.error('document handler xatolik:', error);
     return ctx.reply('⚠️ Faylni saqlashda xatolik bo‘ldi.');
   }
 });
 
-// ===== FALLBACK FOR DOCUMENT-TYPE MOVIES =====
-bot.on('message', async (ctx, next) => {
-  return next();
-});
-
-// ===== GLOBAL ERROR =====
 bot.catch((err, ctx) => {
   console.error(`Bot error (${ctx.updateType}):`, err);
 });
 
-// ===== START BOT =====
 bot
   .launch()
-  .then(() => {
-    console.log('✅ Bot ishga tushdi');
-  })
-  .catch((error) => {
-    console.error('Bot launch xatolik:', error);
-  });
+  .then(() => console.log('✅ Bot ishga tushdi'))
+  .catch((error) => console.error('Bot launch xatolik:', error));
 
-// graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
